@@ -7,4 +7,5 @@ def subtract(a, b):
     return a - b
 
 def multiply(a, b):
+    # Multiplies 2 numbers
     return a * b
