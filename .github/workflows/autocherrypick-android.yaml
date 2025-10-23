@@ -3,8 +3,6 @@ name: Cherry Pick Automation
 on:
   pull_request:
     types: [closed]
-
-on:
   workflow_call:
 
 permissions:
