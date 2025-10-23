@@ -1,0 +1,118 @@
+name: Cherry Pick Automation
+
+on:
+  pull_request:
+    types: [closed]
+
+on:
+  workflow_call:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  cherry-pick:
+    if: >
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'feature/cherrypick-automation-trunk' &&
+      contains(join(fromJson(toJson(github.event.pull_request.labels)).*.name, ','), 'cherry_pick')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract PR labels
+        id: labels
+        run: |
+          LABELS=$(jq -r '.pull_request.labels[].name' < "$GITHUB_EVENT_PATH")
+          echo "labels<<EOF" >> $GITHUB_OUTPUT
+          echo "$LABELS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Cherry-pick to target branches
+        id: cherry
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LABELS: ${{ steps.labels.outputs.labels }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          SUCCESS_BRANCHES=()
+          FAILED_BRANCHES=()
+
+          echo "$LABELS" | while read label; do
+            [ -z "$label" ] && continue
+
+            if [[ "$label" =~ ^CP:\ (.+)$ ]]; then
+              target_branch="${BASH_REMATCH[1]}"
+              echo "🔍 Found target branch label: $target_branch"
+
+              if git ls-remote --exit-code origin "$target_branch" >/dev/null 2>&1; then
+                new_branch="feature/cherry-pick-${PR_NUMBER}-to-${target_branch//\//-}"
+                echo "➡️  Creating new branch: $new_branch from $target_branch"
+
+                git fetch origin "$target_branch"
+                git checkout -b "$new_branch" "origin/$target_branch"
+
+                if git cherry-pick -x "$MERGE_SHA"; then
+                  echo "✅ Cherry-pick successful for $target_branch"
+                  git push origin "$new_branch"
+                  SUCCESS_BRANCHES+=("$target_branch")
+
+                  gh pr create \
+                    --base "$target_branch" \
+                    --head "$new_branch" \
+                    --title "Cherry pick #${PR_NUMBER} into ${target_branch}" \
+                    --body "Automatic cherry-pick of #${PR_NUMBER} into \`${target_branch}\`."
+                else
+                  echo "⚠️ Cherry-pick failed for $target_branch"
+                  FAILED_BRANCHES+=("$target_branch")
+                  git cherry-pick --abort || true
+                fi
+              else
+                echo "🚫 Branch $target_branch not found. Skipping."
+                FAILED_BRANCHES+=("$target_branch (not found)")
+              fi
+            fi
+          done
+
+          # Save results to outputs
+          echo "success_branches=${SUCCESS_BRANCHES[*]}" >> $GITHUB_OUTPUT
+          echo "failed_branches=${FAILED_BRANCHES[*]}" >> $GITHUB_OUTPUT
+
+      - name: Comment results on original PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SUCCESS_BRANCHES: ${{ steps.cherry.outputs.success_branches }}
+          FAILED_BRANCHES: ${{ steps.cherry.outputs.failed_branches }}
+        run: |
+          COMMENT="### 🧩 Cherry-pick Summary for #${PR_NUMBER}\n"
+
+          if [ -n "$SUCCESS_BRANCHES" ]; then
+            COMMENT+="✅ **Successful cherry-picks:**\n"
+            for branch in $SUCCESS_BRANCHES; do
+              COMMENT+="- \`${branch}\`\n"
+            done
+          fi
+
+          if [ -n "$FAILED_BRANCHES" ]; then
+            COMMENT+="\n⚠️ **Failed or skipped cherry-picks:**\n"
+            for branch in $FAILED_BRANCHES; do
+              COMMENT+="- \`${branch}\`\n"
+            done
+          fi
+
+          if [ -z "$SUCCESS_BRANCHES" ] && [ -z "$FAILED_BRANCHES" ]; then
+            COMMENT+="No valid \`CP:\` labels found. Nothing to cherry-pick."
+          fi
+
+          echo -e "$COMMENT"
+          gh pr comment "$PR_NUMBER" --body "$COMMENT"
