@@ -1,0 +1,55 @@
+# This workflow is designed to create a new release branch from an specifc base branch
+name: Create New Release Branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (format: X.Y.Z)"
+        required: true
+        type: string
+        pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+
+      base_branch:
+        description: "Base branch"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  run-workflow:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate Base Branch Exists
+        run: |
+          if ! git ls-remote --heads origin "${{ inputs.base_branch }}" | grep "${{ inputs.base_branch }}" > /dev/null; then
+            echo "ERROR: Branch '${{ inputs.base_branch }}' does not exist in origin."
+            exit 1
+          fi
+        shell: bash
+
+      - name: Print Inputs Report
+        run: |
+          echo "### Inputs Received ###"
+          echo "Scenario: ${{ inputs.scenario }}"
+          echo "Version:  ${{ inputs.version }}"
+          echo "Tag:      ${{ inputs.tag }}"
+          echo "Base:     ${{ inputs.base_branch }}"
+          echo "Env:      ${{ inputs.environment }}"
+
+      - name: Create and Push Release Branch
+        run: |
+          RELEASE_BRANCH="release/exp-${{ inputs.version }}"
+          BASE="${{ inputs.base_branch }}"
+          echo "Creating branch: $RELEASE_BRANCH from $BASE"
+          git fetch origin "$BASE"
+          git checkout -b "$RELEASE_BRANCH" "origin/$BASE"
+          git push origin "$RELEASE_BRANCH"

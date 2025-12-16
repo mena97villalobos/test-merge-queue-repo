@@ -1,0 +1,63 @@
+# This workflow is designed to create a new build from trunk (latest commit) and upload it as an artifact
+name: Create Trunk Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (format: X.Y.Z)"
+        required: true
+        type: string
+        pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+
+      environment:
+        description: "Select environment"
+        required: true
+        type: choice
+        options:
+          - debug
+          - staging
+          - prod
+
+permissions:
+  contents: write
+
+jobs:
+  run-workflow:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Print Inputs Report
+        run: |
+          echo "### Inputs Received ###"
+          echo "Scenario: New Trunk Build"
+          echo "Version:  ${{ inputs.version }}"
+          echo "Base:     trunk"
+          echo "Env:      ${{ inputs.environment }}"
+
+      # The next step should call the build bash script developed by Kyle
+
+      - name: Generate Inputs Report JSON
+        run: |
+          cat <<EOF > inputs-report.json
+          {
+            "scenario": "New Trunk Build",
+            "version": "${{ inputs.version }}",
+            "base": "trunk",
+            "environment": "${{ inputs.environment }}"
+          }
+          EOF
+
+      # Generated output should be publish as artifacts, using a JSON report placeholder with input variables for now
+
+      - name: Upload Inputs Report Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: inputs-report
+          path: inputs-report.json
+          retention-days: 1
